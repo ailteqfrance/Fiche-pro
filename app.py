@@ -1,25 +1,34 @@
 import streamlit as st
 import os
 import json
+import requests
 from groq import Groq
 
 st.set_page_config(page_title="Fiche Pro — Audit & Génération", layout="wide", page_icon="📦")
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "")
 client = Groq(api_key=GROQ_API_KEY)
 
-# ── CSS ────────────────────────────────────────────────────────────────────────
+# ── CSS THÈME CLAIR ────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-  [data-testid="stAppViewContainer"] { background: #0f1318; }
-  [data-testid="stSidebar"] { background: #111827; border-right: 1px solid #1e2d45; }
-  h1, h2, h3 { font-family: 'Segoe UI', sans-serif !important; }
+  [data-testid="stAppViewContainer"] { background: #f8f9fb; }
+  [data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid #e5e7eb; }
+  .main-header {
+    background: #ffffff;
+    border-bottom: 2px solid #e5e7eb;
+    padding: 1rem 1.5rem;
+    margin-bottom: 1.5rem;
+    border-radius: 10px;
+  }
   .metric-card {
-    background: #1a2235;
-    border: 1px solid #1e2d45;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
     border-radius: 10px;
     padding: 1rem 1.2rem;
     margin-bottom: 0.5rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
   }
   .score-big {
     font-size: 3rem;
@@ -27,40 +36,121 @@ st.markdown("""
     text-align: center;
     margin: 0.5rem 0;
   }
-  .score-green { color: #00d4a0; }
-  .score-orange { color: #ff6b35; }
-  .score-red { color: #ff4757; }
-  .section-score {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.6rem 0.8rem;
-    background: #111827;
-    border-radius: 8px;
-    margin-bottom: 0.4rem;
-    border-left: 3px solid #1e2d45;
-  }
+  .score-green { color: #059669; }
+  .score-orange { color: #d97706; }
+  .score-red { color: #dc2626; }
   .reco-item {
     padding: 0.5rem 0.75rem;
     border-radius: 6px;
     margin-bottom: 0.3rem;
     font-size: 0.85rem;
   }
-  .reco-ok { background: rgba(0,212,160,0.1); border-left: 3px solid #00d4a0; }
-  .reco-ko { background: rgba(255,71,87,0.1); border-left: 3px solid #ff4757; }
-  .reco-warn { background: rgba(255,107,53,0.1); border-left: 3px solid #ff6b35; }
+  .reco-ok { background: #f0fdf4; border-left: 3px solid #059669; color: #065f46; }
+  .reco-ko { background: #fef2f2; border-left: 3px solid #dc2626; color: #991b1b; }
+  .reco-warn { background: #fffbeb; border-left: 3px solid #d97706; color: #92400e; }
+  .asin-box {
+    background: #ffffff;
+    border: 2px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .product-preview {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  div[data-testid="stButton"] button {
+    background: #059669 !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
 # ── SIDEBAR ────────────────────────────────────────────────────────────────────
-st.sidebar.title("📦 Fiche Pro")
+st.sidebar.image("https://via.placeholder.com/150x40/059669/ffffff?text=Fiche+Pro", width=150)
 st.sidebar.markdown("---")
 mode = st.sidebar.radio("Mode", ["🔍 Audit de fiche", "✍️ Générer une fiche"])
 st.sidebar.markdown("---")
 st.sidebar.markdown("🔗 [Ads Optimizer Pro](https://amazon-optimizer-rwjs.onrender.com)")
 st.sidebar.markdown("*by AilteqFrance*")
 
-# ── FONCTIONS ──────────────────────────────────────────────────────────────────
+# ── FONCTIONS SCRAPING ─────────────────────────────────────────────────────────
+def extract_asin(input_text):
+    """Extrait l'ASIN depuis une URL ou texte brut."""
+    import re
+    input_text = input_text.strip()
+    # Format ASIN direct
+    if re.match(r'^[A-Z0-9]{10}$', input_text):
+        return input_text
+    # URL Amazon
+    match = re.search(r'/dp/([A-Z0-9]{10})', input_text)
+    if match:
+        return match.group(1)
+    match = re.search(r'/gp/product/([A-Z0-9]{10})', input_text)
+    if match:
+        return match.group(1)
+    return None
+
+def scrape_amazon(asin, marketplace="fr"):
+    """Scrape la fiche Amazon via ScraperAPI."""
+    if not SCRAPER_API_KEY:
+        return None, "Clé ScraperAPI manquante"
+    
+    url = f"https://www.amazon.{marketplace}/dp/{asin}"
+    params = {
+        "api_key": SCRAPER_API_KEY,
+        "url": url,
+        "autoparse": "true",
+        "country_code": marketplace,
+    }
+    
+    try:
+        resp = requests.get("https://api.scraperapi.com/", params=params, timeout=30)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data, None
+        return None, f"Erreur HTTP {resp.status_code}"
+    except Exception as e:
+        return None, str(e)
+
+def parse_product_data(data):
+    """Parse les données ScraperAPI en format utilisable."""
+    if not data:
+        return {}
+    
+    product = {}
+    
+    # ScraperAPI autoparse format
+    product["titre"] = data.get("name", data.get("title", ""))
+    product["prix"] = data.get("pricing", data.get("price", ""))
+    product["note"] = data.get("stars", data.get("rating", 0))
+    product["nb_avis"] = data.get("total_reviews", data.get("reviews_count", 0))
+    
+    # Bullets
+    features = data.get("feature_bullets", data.get("features", []))
+    if isinstance(features, list):
+        for i, f in enumerate(features[:5], 1):
+            product[f"bullet{i}"] = f if isinstance(f, str) else str(f)
+    
+    # Description
+    product["description"] = data.get("description", data.get("product_description", ""))
+    
+    # Images
+    images = data.get("images", data.get("image_list", []))
+    product["nb_images"] = len(images) if isinstance(images, list) else 0
+    
+    # A+
+    product["a_plus"] = bool(data.get("aplus_content", data.get("enhanced_content", False)))
+    
+    return product
+
+# ── FONCTIONS IA ───────────────────────────────────────────────────────────────
 def appel_groq(prompt, json_mode=True):
     try:
         kwargs = {"response_format": {"type": "json_object"}} if json_mode else {}
@@ -78,7 +168,7 @@ def appel_groq(prompt, json_mode=True):
         st.error(f"Erreur Groq : {e}")
         return None
 
-def score_color(score, max_score):
+def score_color_class(score, max_score):
     pct = score / max_score * 100
     if pct >= 75: return "score-green"
     if pct >= 50: return "score-orange"
@@ -92,40 +182,12 @@ def afficher_reco(items):
         cls = "reco-ok" if type_ == "ok" else ("reco-ko" if type_ == "ko" else "reco-warn")
         st.markdown(f'<div class="reco-item {cls}">{icon} {texte}</div>', unsafe_allow_html=True)
 
-# ── MODE AUDIT ─────────────────────────────────────────────────────────────────
-if mode == "🔍 Audit de fiche":
-    st.title("🔍 Audit de Fiche Produit Amazon")
-    st.markdown("Collez les informations de votre fiche pour obtenir un score détaillé et des recommandations.")
-    st.markdown("---")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        titre = st.text_area("📝 Titre du produit", height=80, placeholder="Ex: Thermomètre Frontal Sans Contact...")
-        bullet1 = st.text_area("🎯 Bullet point 1", height=60, placeholder="Premier avantage produit...")
-        bullet2 = st.text_area("🎯 Bullet point 2", height=60, placeholder="Deuxième avantage...")
-        bullet3 = st.text_area("🎯 Bullet point 3", height=60, placeholder="Troisième avantage...")
-        bullet4 = st.text_area("🎯 Bullet point 4", height=60, placeholder="Quatrième avantage...")
-        bullet5 = st.text_area("🎯 Bullet point 5", height=60, placeholder="Cinquième avantage...")
-
-    with col2:
-        description = st.text_area("📄 Description / A+ Content", height=150, placeholder="Description complète du produit...")
-        mot_cle_principal = st.text_input("🔑 Mot-clé principal cible", placeholder="Ex: thermomètre frontal sans contact")
-        categorie = st.text_input("📂 Catégorie Amazon", placeholder="Ex: Santé & Soins du corps")
-        prix = st.number_input("💰 Prix (€)", min_value=0.0, value=25.0, step=0.5)
-        nb_avis = st.number_input("⭐ Nombre d'avis", min_value=0, value=0, step=1)
-        note = st.slider("⭐ Note moyenne", 1.0, 5.0, 4.0, 0.1)
-        nb_images = st.number_input("🖼️ Nombre d'images", min_value=0, max_value=9, value=5)
-        a_plus = st.checkbox("✅ A+ Content présent")
-
-    st.markdown("---")
-
-    if st.button("🚀 Lancer l'audit", use_container_width=True, type="primary"):
-        if not titre:
-            st.warning("Veuillez au minimum renseigner le titre du produit.")
-        else:
-            bullets = "\n".join([b for b in [bullet1, bullet2, bullet3, bullet4, bullet5] if b.strip()])
-
-            prompt = f"""Tu es un expert Amazon FBA spécialisé dans l'optimisation de fiches produit pour Amazon France.
+def lancer_audit(titre, bullet1, bullet2, bullet3, bullet4, bullet5,
+                  description, mot_cle_principal, categorie, prix,
+                  nb_avis, note, nb_images, a_plus):
+    bullets = "\n".join([b for b in [bullet1, bullet2, bullet3, bullet4, bullet5] if b and b.strip()])
+    
+    prompt = f"""Tu es un expert Amazon FBA spécialisé dans l'optimisation de fiches produit pour Amazon France.
 
 Analyse cette fiche produit Amazon et retourne un JSON avec le format EXACT suivant :
 
@@ -179,79 +241,154 @@ Données de la fiche :
 
 Sois précis, critique et actionnable. Réponds UNIQUEMENT en JSON valide."""
 
-            with st.spinner("Analyse en cours avec l'IA..."):
-                result = appel_groq(prompt)
+    with st.spinner("Analyse IA en cours..."):
+        return appel_groq(prompt)
 
-            if result:
-                score = result.get("score_global", 0)
-                sections = result.get("sections", {})
+def afficher_resultats(result):
+    if not result:
+        return
+    
+    score = result.get("score_global", 0)
+    sections = result.get("sections", {})
 
-                # Score global
-                st.markdown("---")
-                st.markdown("## 📊 Résultats de l'audit")
+    st.markdown("---")
+    st.markdown("## 📊 Résultats de l'audit")
 
-                col_score, col_top3 = st.columns([1, 2])
-                with col_score:
-                    cls = "score-green" if score >= 75 else ("score-orange" if score >= 50 else "score-red")
-                    label = "EXCELLENT" if score >= 75 else ("À AMÉLIORER" if score >= 50 else "CRITIQUE")
-                    st.markdown(f"""
-                    <div class="metric-card" style="text-align:center">
-                        <div style="font-size:0.75rem;letter-spacing:2px;color:#6b7a99">SCORE GLOBAL</div>
-                        <div class="score-big {cls}">{score}/100</div>
-                        <div style="font-size:0.85rem;color:#6b7a99">{label}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+    col_score, col_top3 = st.columns([1, 2])
+    with col_score:
+        cls = "score-green" if score >= 75 else ("score-orange" if score >= 50 else "score-red")
+        label = "EXCELLENT" if score >= 75 else ("À AMÉLIORER" if score >= 50 else "CRITIQUE")
+        st.markdown(f"""
+        <div class="metric-card" style="text-align:center">
+            <div style="font-size:0.75rem;letter-spacing:2px;color:#6b7280">SCORE GLOBAL</div>
+            <div class="score-big {cls}">{score}/100</div>
+            <div style="font-size:0.85rem;color:#6b7280;font-weight:600">{label}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-                with col_top3:
-                    st.markdown("### 🎯 Top 3 actions prioritaires")
-                    for i, action in enumerate(result.get("top3_actions", []), 1):
-                        st.markdown(f"**{i}.** {action}")
+    with col_top3:
+        st.markdown("### 🎯 Top 3 actions prioritaires")
+        for i, action in enumerate(result.get("top3_actions", []), 1):
+            st.markdown(f"**{i}.** {action}")
 
-                # Sections
-                st.markdown("---")
-                section_labels = {
-                    "titre": "📝 Titre",
-                    "images": "🖼️ Images",
-                    "bullets": "🎯 Bullet Points",
-                    "seo": "🔍 SEO",
-                    "preuve_sociale": "⭐ Preuve Sociale"
-                }
+    st.markdown("---")
+    section_labels = {
+        "titre": "📝 Titre",
+        "images": "🖼️ Images",
+        "bullets": "🎯 Bullet Points",
+        "seo": "🔍 SEO",
+        "preuve_sociale": "⭐ Preuve Sociale"
+    }
 
-                cols = st.columns(2)
-                for i, (key, label) in enumerate(section_labels.items()):
-                    sec = sections.get(key, {})
-                    sc = sec.get("score", 0)
-                    mx = sec.get("max", 20)
-                    items = sec.get("items", [])
-                    cls = score_color(sc, mx)
+    cols = st.columns(2)
+    for i, (key, label) in enumerate(section_labels.items()):
+        sec = sections.get(key, {})
+        sc = sec.get("score", 0)
+        mx = sec.get("max", 20)
+        items = sec.get("items", [])
+        cls = score_color_class(sc, mx)
 
-                    with cols[i % 2]:
-                        st.markdown(f"""
-                        <div class="metric-card">
-                          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
-                            <span style="font-weight:700">{label}</span>
-                            <span class="{cls}" style="font-size:1.1rem;font-weight:800">{sc}/{mx}</span>
-                          </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        afficher_reco(items)
-                        st.markdown("")
+        with cols[i % 2]:
+            st.markdown(f"""
+            <div class="metric-card">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+                <span style="font-weight:700;color:#111827">{label}</span>
+                <span class="{cls}" style="font-size:1.1rem;font-weight:800">{sc}/{mx}</span>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+            afficher_reco(items)
+            st.markdown("")
 
-                # Suggestions IA
-                st.markdown("---")
-                st.markdown("### 💡 Suggestions IA")
-                col_t, col_b = st.columns(2)
-                with col_t:
-                    st.markdown("**Titre optimisé suggéré :**")
-                    st.info(result.get("titre_optimise", "—"))
-                with col_b:
-                    st.markdown("**Bullet point amélioré :**")
-                    st.info(result.get("bullet_optimise", "—"))
+    st.markdown("---")
+    st.markdown("### 💡 Suggestions IA")
+    col_t, col_b = st.columns(2)
+    with col_t:
+        st.markdown("**Titre optimisé suggéré :**")
+        st.info(result.get("titre_optimise", "—"))
+    with col_b:
+        st.markdown("**Bullet point amélioré :**")
+        st.info(result.get("bullet_optimise", "—"))
+
+# ── MODE AUDIT ─────────────────────────────────────────────────────────────────
+if mode == "🔍 Audit de fiche":
+    st.title("🔍 Audit de Fiche Produit Amazon")
+    st.markdown("Entrez un ASIN ou collez les informations manuellement.")
+    st.markdown("---")
+
+    # ASIN auto
+    st.markdown("### 🤖 Récupération automatique")
+    col_asin, col_mkt = st.columns([3, 1])
+    with col_asin:
+        asin_input = st.text_input("ASIN ou URL Amazon", placeholder="Ex: B073JYC4XM ou https://www.amazon.fr/dp/B073JYC4XM")
+    with col_mkt:
+        marketplace = st.selectbox("Marketplace", ["fr", "com", "co.uk", "de", "es", "it"])
+
+    mot_cle_principal = st.text_input("🔑 Mot-clé principal cible", placeholder="Ex: thermomètre frontal sans contact")
+
+    # Données produit (remplies auto ou manuellement)
+    if "product_data" not in st.session_state:
+        st.session_state.product_data = {}
+
+    col_fetch, col_manual = st.columns(2)
+    with col_fetch:
+        if st.button("🔄 Récupérer les données Amazon", use_container_width=True):
+            asin = extract_asin(asin_input)
+            if not asin:
+                st.error("ASIN invalide — vérifiez le format (ex: B073JYC4XM)")
+            else:
+                with st.spinner(f"Récupération de la fiche {asin} sur Amazon.{marketplace}..."):
+                    data, err = scrape_amazon(asin, marketplace)
+                if err:
+                    st.error(f"Erreur scraping : {err}")
+                elif data:
+                    parsed = parse_product_data(data)
+                    st.session_state.product_data = parsed
+                    st.success(f"✅ Fiche récupérée ! ASIN : {asin}")
+
+    with col_manual:
+        st.markdown("*Ou remplissez manuellement ci-dessous*")
+
+    st.markdown("---")
+    st.markdown("### 📋 Données de la fiche")
+
+    pd = st.session_state.product_data
+    col1, col2 = st.columns(2)
+    with col1:
+        titre = st.text_area("📝 Titre", value=pd.get("titre", ""), height=80)
+        bullet1 = st.text_area("🎯 Bullet 1", value=pd.get("bullet1", ""), height=60)
+        bullet2 = st.text_area("🎯 Bullet 2", value=pd.get("bullet2", ""), height=60)
+        bullet3 = st.text_area("🎯 Bullet 3", value=pd.get("bullet3", ""), height=60)
+        bullet4 = st.text_area("🎯 Bullet 4", value=pd.get("bullet4", ""), height=60)
+        bullet5 = st.text_area("🎯 Bullet 5", value=pd.get("bullet5", ""), height=60)
+
+    with col2:
+        description = st.text_area("📄 Description", value=pd.get("description", ""), height=150)
+        categorie = st.text_input("📂 Catégorie", placeholder="Ex: Santé & Soins du corps")
+        try:
+            prix_val = float(str(pd.get("prix", "25")).replace("€", "").replace(",", ".").strip().split()[0])
+        except:
+            prix_val = 25.0
+        prix = st.number_input("💰 Prix (€)", value=prix_val, min_value=0.0, step=0.5)
+        nb_avis = st.number_input("💬 Nombre d'avis", value=int(pd.get("nb_avis", 0)), min_value=0)
+        note = st.slider("⭐ Note", 1.0, 5.0, float(pd.get("note", 4.0)), 0.1)
+        nb_images = st.number_input("🖼️ Nombre d'images", value=int(pd.get("nb_images", 5)), min_value=0, max_value=9)
+        a_plus = st.checkbox("✅ A+ Content présent", value=bool(pd.get("a_plus", False)))
+
+    st.markdown("---")
+    if st.button("🚀 Lancer l'audit", use_container_width=True, type="primary"):
+        if not titre:
+            st.warning("Veuillez renseigner le titre.")
+        else:
+            result = lancer_audit(titre, bullet1, bullet2, bullet3, bullet4, bullet5,
+                                   description, mot_cle_principal, categorie, prix,
+                                   nb_avis, note, nb_images, a_plus)
+            afficher_resultats(result)
 
 # ── MODE GÉNÉRATION ────────────────────────────────────────────────────────────
 elif mode == "✍️ Générer une fiche":
     st.title("✍️ Générateur de Fiche Produit Amazon")
-    st.markdown("Renseignez les informations de base et l'IA génère une fiche optimisée pour Amazon France.")
+    st.markdown("Renseignez les informations de base — l'IA génère une fiche optimisée SEO.")
     st.markdown("---")
 
     col1, col2 = st.columns(2)
@@ -299,19 +436,18 @@ Informations produit :
 - Avantages : {avantages or 'non spécifiés'}
 - Public cible : {public_cible or 'non spécifié'}
 
-Règles importantes :
-- Le titre doit contenir les 2-3 premiers mots-clés naturellement
+Règles :
+- Titre avec les 2-3 premiers mots-clés naturellement intégrés
 - Chaque bullet commence par un bénéfice en MAJUSCULES suivi de " — " puis l'explication
-- La description doit être persuasive et rassurante
+- Description persuasive et rassurante
 - Optimisé pour Amazon.fr"""
 
-            with st.spinner("Génération en cours avec l'IA..."):
+            with st.spinner("Génération en cours..."):
                 result_gen = appel_groq(prompt_gen)
 
             if result_gen:
                 st.markdown("---")
-                st.markdown("## 📋 Fiche générée")
-                st.success("✅ Fiche générée avec succès ! Copiez chaque section dans Seller Central.")
+                st.success("✅ Fiche générée avec succès !")
 
                 st.markdown("### 📝 Titre")
                 titre_gen = result_gen.get("titre", "")
@@ -329,10 +465,8 @@ Règles importantes :
                 st.text_area("Description", value=result_gen.get("description", ""), height=200)
 
                 st.markdown("### 🔑 Mots-clés backend")
-                st.text_area("Mots-clés backend (à coller dans Seller Central → Mots-clés)",
-                             value=result_gen.get("mots_cles_backend", ""), height=80)
+                st.text_area("Mots-clés backend", value=result_gen.get("mots_cles_backend", ""), height=80)
 
-                # Export
                 export = f"""FICHE PRODUIT — {produit}
 {'='*50}
 
