@@ -1,2 +1,5 @@
 streamlit
 groq
+requests
+beautifulsoup4
+lxml

@@ -1,13 +1,13 @@
 import streamlit as st
 import os
 import json
-import requests
+import re
 from groq import Groq
+from audit_listing import get_product_data, audit_listing
 
 st.set_page_config(page_title="Fiche Pro — Audit & Génération", layout="wide", page_icon="📦")
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "")
 client = Groq(api_key=GROQ_API_KEY)
 
 # ── CSS THÈME CLAIR ────────────────────────────────────────────────────────────
@@ -15,13 +15,6 @@ st.markdown("""
 <style>
   [data-testid="stAppViewContainer"] { background: #f8f9fb; }
   [data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid #e5e7eb; }
-  .main-header {
-    background: #ffffff;
-    border-bottom: 2px solid #e5e7eb;
-    padding: 1rem 1.5rem;
-    margin-bottom: 1.5rem;
-    border-radius: 10px;
-  }
   .metric-card {
     background: #ffffff;
     border: 1px solid #e5e7eb;
@@ -48,20 +41,6 @@ st.markdown("""
   .reco-ok { background: #f0fdf4; border-left: 3px solid #059669; color: #065f46; }
   .reco-ko { background: #fef2f2; border-left: 3px solid #dc2626; color: #991b1b; }
   .reco-warn { background: #fffbeb; border-left: 3px solid #d97706; color: #92400e; }
-  .asin-box {
-    background: #ffffff;
-    border: 2px solid #e5e7eb;
-    border-radius: 12px;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-  .product-preview {
-    background: #f0fdf4;
-    border: 1px solid #bbf7d0;
-    border-radius: 10px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-  }
   div[data-testid="stButton"] button {
     background: #059669 !important;
     color: white !important;
@@ -73,22 +52,18 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── SIDEBAR ────────────────────────────────────────────────────────────────────
-st.sidebar.image("https://via.placeholder.com/150x40/059669/ffffff?text=Fiche+Pro", width=150)
+st.sidebar.title("📦 Fiche Pro")
 st.sidebar.markdown("---")
 mode = st.sidebar.radio("Mode", ["🔍 Audit de fiche", "✍️ Générer une fiche"])
 st.sidebar.markdown("---")
 st.sidebar.markdown("🔗 [Ads Optimizer Pro](https://amazon-optimizer-rwjs.onrender.com)")
 st.sidebar.markdown("*by AilteqFrance*")
 
-# ── FONCTIONS SCRAPING ─────────────────────────────────────────────────────────
+# ── FONCTIONS ──────────────────────────────────────────────────────────────────
 def extract_asin(input_text):
-    """Extrait l'ASIN depuis une URL ou texte brut."""
-    import re
     input_text = input_text.strip()
-    # Format ASIN direct
     if re.match(r'^[A-Z0-9]{10}$', input_text):
         return input_text
-    # URL Amazon
     match = re.search(r'/dp/([A-Z0-9]{10})', input_text)
     if match:
         return match.group(1)
@@ -97,60 +72,6 @@ def extract_asin(input_text):
         return match.group(1)
     return None
 
-def scrape_amazon(asin, marketplace="fr"):
-    """Scrape la fiche Amazon via ScraperAPI."""
-    if not SCRAPER_API_KEY:
-        return None, "Clé ScraperAPI manquante"
-    
-    url = f"https://www.amazon.{marketplace}/dp/{asin}"
-    params = {
-        "api_key": SCRAPER_API_KEY,
-        "url": url,
-        "autoparse": "true",
-        "country_code": marketplace,
-    }
-    
-    try:
-        resp = requests.get("https://api.scraperapi.com/", params=params, timeout=30)
-        if resp.status_code == 200:
-            data = resp.json()
-            return data, None
-        return None, f"Erreur HTTP {resp.status_code}"
-    except Exception as e:
-        return None, str(e)
-
-def parse_product_data(data):
-    """Parse les données ScraperAPI en format utilisable."""
-    if not data:
-        return {}
-    
-    product = {}
-    
-    # ScraperAPI autoparse format
-    product["titre"] = data.get("name", data.get("title", ""))
-    product["prix"] = data.get("pricing", data.get("price", ""))
-    product["note"] = data.get("stars", data.get("rating", 0))
-    product["nb_avis"] = data.get("total_reviews", data.get("reviews_count", 0))
-    
-    # Bullets
-    features = data.get("feature_bullets", data.get("features", []))
-    if isinstance(features, list):
-        for i, f in enumerate(features[:5], 1):
-            product[f"bullet{i}"] = f if isinstance(f, str) else str(f)
-    
-    # Description
-    product["description"] = data.get("description", data.get("product_description", ""))
-    
-    # Images
-    images = data.get("images", data.get("image_list", []))
-    product["nb_images"] = len(images) if isinstance(images, list) else 0
-    
-    # A+
-    product["a_plus"] = bool(data.get("aplus_content", data.get("enhanced_content", False)))
-    
-    return product
-
-# ── FONCTIONS IA ───────────────────────────────────────────────────────────────
 def appel_groq(prompt, json_mode=True):
     try:
         kwargs = {"response_format": {"type": "json_object"}} if json_mode else {}
@@ -182,74 +103,9 @@ def afficher_reco(items):
         cls = "reco-ok" if type_ == "ok" else ("reco-ko" if type_ == "ko" else "reco-warn")
         st.markdown(f'<div class="reco-item {cls}">{icon} {texte}</div>', unsafe_allow_html=True)
 
-def lancer_audit(titre, bullet1, bullet2, bullet3, bullet4, bullet5,
-                  description, mot_cle_principal, categorie, prix,
-                  nb_avis, note, nb_images, a_plus):
-    bullets = "\n".join([b for b in [bullet1, bullet2, bullet3, bullet4, bullet5] if b and b.strip()])
-    
-    prompt = f"""Tu es un expert Amazon FBA spécialisé dans l'optimisation de fiches produit pour Amazon France.
-
-Analyse cette fiche produit Amazon et retourne un JSON avec le format EXACT suivant :
-
-{{
-  "score_global": <nombre entre 0 et 100>,
-  "sections": {{
-    "titre": {{
-      "score": <0 à 25>,
-      "max": 25,
-      "items": [
-        {{"icon": "✅", "type": "ok", "texte": "..."}},
-        {{"icon": "❌", "type": "ko", "texte": "..."}}
-      ]
-    }},
-    "images": {{
-      "score": <0 à 20>,
-      "max": 20,
-      "items": [...]
-    }},
-    "bullets": {{
-      "score": <0 à 20>,
-      "max": 20,
-      "items": [...]
-    }},
-    "seo": {{
-      "score": <0 à 20>,
-      "max": 20,
-      "items": [...]
-    }},
-    "preuve_sociale": {{
-      "score": <0 à 15>,
-      "max": 15,
-      "items": [...]
-    }}
-  }},
-  "top3_actions": ["action 1", "action 2", "action 3"],
-  "titre_optimise": "<propose un titre optimisé>",
-  "bullet_optimise": "<propose un bullet point amélioré basé sur le bullet 1>"
-}}
-
-Données de la fiche :
-- Titre : {titre}
-- Mot-clé principal cible : {mot_cle_principal or 'non spécifié'}
-- Catégorie : {categorie or 'non spécifiée'}
-- Bullets : {bullets or 'non renseignés'}
-- Description : {description or 'non renseignée'}
-- Prix : {prix}€
-- Avis : {nb_avis} avis, note {note}/5
-- Images : {nb_images} images
-- A+ Content : {'Oui' if a_plus else 'Non'}
-
-Sois précis, critique et actionnable. Réponds UNIQUEMENT en JSON valide."""
-
-    with st.spinner("Analyse IA en cours..."):
-        return appel_groq(prompt)
-
-def afficher_resultats(result):
-    if not result:
-        return
-    
+def afficher_resultats_audit(result, product_data=None):
     score = result.get("score_global", 0)
-    sections = result.get("sections", {})
+    details = result.get("details", {})
 
     st.markdown("---")
     st.markdown("## 📊 Résultats de l'audit")
@@ -268,7 +124,7 @@ def afficher_resultats(result):
 
     with col_top3:
         st.markdown("### 🎯 Top 3 actions prioritaires")
-        for i, action in enumerate(result.get("top3_actions", []), 1):
+        for i, action in enumerate(result.get("top3", []), 1):
             st.markdown(f"**{i}.** {action}")
 
     st.markdown("---")
@@ -282,7 +138,7 @@ def afficher_resultats(result):
 
     cols = st.columns(2)
     for i, (key, label) in enumerate(section_labels.items()):
-        sec = sections.get(key, {})
+        sec = details.get(key, {})
         sc = sec.get("score", 0)
         mx = sec.get("max", 20)
         items = sec.get("items", [])
@@ -300,90 +156,93 @@ def afficher_resultats(result):
             afficher_reco(items)
             st.markdown("")
 
-    st.markdown("---")
-    st.markdown("### 💡 Suggestions IA")
-    col_t, col_b = st.columns(2)
-    with col_t:
-        st.markdown("**Titre optimisé suggéré :**")
-        st.info(result.get("titre_optimise", "—"))
-    with col_b:
-        st.markdown("**Bullet point amélioré :**")
-        st.info(result.get("bullet_optimise", "—"))
+    # Suggestions IA
+    if product_data:
+        st.markdown("---")
+        st.markdown("### 💡 Suggestions IA")
+        with st.spinner("Génération des suggestions..."):
+            prompt = f"""Tu es un expert Amazon. Propose en JSON :
+{{
+  "titre_optimise": "<titre optimisé>",
+  "bullet_optimise": "<bullet 1 amélioré>"
+}}
+
+Titre actuel : {product_data.get('title', '')}
+Bullet 1 : {product_data.get('bullets', [''])[0] if product_data.get('bullets') else ''}
+Score SEO : {details.get('seo', {}).get('score', 0)}/20"""
+            suggestions = appel_groq(prompt)
+
+        if suggestions:
+            col_t, col_b = st.columns(2)
+            with col_t:
+                st.markdown("**Titre optimisé suggéré :**")
+                st.info(suggestions.get("titre_optimise", "—"))
+            with col_b:
+                st.markdown("**Bullet point amélioré :**")
+                st.info(suggestions.get("bullet_optimise", "—"))
 
 # ── MODE AUDIT ─────────────────────────────────────────────────────────────────
 if mode == "🔍 Audit de fiche":
     st.title("🔍 Audit de Fiche Produit Amazon")
-    st.markdown("Entrez un ASIN ou collez les informations manuellement.")
+    st.markdown("Entrez un ASIN ou URL Amazon — les données sont récupérées automatiquement.")
     st.markdown("---")
 
-    # ASIN auto
-    st.markdown("### 🤖 Récupération automatique")
     col_asin, col_mkt = st.columns([3, 1])
     with col_asin:
-        asin_input = st.text_input("ASIN ou URL Amazon", placeholder="Ex: B073JYC4XM ou https://www.amazon.fr/dp/B073JYC4XM")
+        asin_input = st.text_input("ASIN ou URL Amazon", placeholder="Ex: B09XPQRCW7 ou https://www.amazon.fr/dp/B09XPQRCW7")
     with col_mkt:
         marketplace = st.selectbox("Marketplace", ["fr", "com", "co.uk", "de", "es", "it"])
 
-    mot_cle_principal = st.text_input("🔑 Mot-clé principal cible", placeholder="Ex: thermomètre frontal sans contact")
+    mot_cle_principal = st.text_input("🔑 Mot-clé principal cible (optionnel)", placeholder="Ex: kit santé 3en1")
 
-    # Données produit (remplies auto ou manuellement)
     if "product_data" not in st.session_state:
-        st.session_state.product_data = {}
+        st.session_state.product_data = None
 
-    col_fetch, col_manual = st.columns(2)
+    col_fetch, _ = st.columns([2, 2])
     with col_fetch:
-        if st.button("🔄 Récupérer les données Amazon", use_container_width=True):
+        if st.button("🔄 Récupérer la fiche Amazon", use_container_width=True):
             asin = extract_asin(asin_input)
             if not asin:
-                st.error("ASIN invalide — vérifiez le format (ex: B073JYC4XM)")
+                st.error("ASIN invalide — ex: B09XPQRCW7")
             else:
-                with st.spinner(f"Récupération de la fiche {asin} sur Amazon.{marketplace}..."):
-                    data, err = scrape_amazon(asin, marketplace)
-                if err:
-                    st.error(f"Erreur scraping : {err}")
-                elif data:
-                    parsed = parse_product_data(data)
-                    st.session_state.product_data = parsed
-                    st.success(f"✅ Fiche récupérée ! ASIN : {asin}")
+                with st.spinner(f"Récupération de la fiche {asin}..."):
+                    try:
+                        data = get_product_data(asin, marketplace)
+                        st.session_state.product_data = data
+                        st.success(f"✅ Fiche récupérée — {data.get('title', '')[:60]}...")
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
 
-    with col_manual:
-        st.markdown("*Ou remplissez manuellement ci-dessous*")
+    # Afficher données récupérées
+    if st.session_state.product_data:
+        pd = st.session_state.product_data
+        st.markdown("---")
+        st.markdown("### 📋 Données récupérées")
 
-    st.markdown("---")
-    st.markdown("### 📋 Données de la fiche")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("🖼️ Images", pd.get("image_count", 0))
+        col2.metric("⭐ Note", pd.get("rating", "—"))
+        col3.metric("💬 Avis", pd.get("nb_avis", 0))
+        col4.metric("💰 Prix", f"{pd.get('prix', '—')}€" if pd.get('prix') else "—")
 
-    pd = st.session_state.product_data
-    col1, col2 = st.columns(2)
-    with col1:
-        titre = st.text_area("📝 Titre", value=pd.get("titre", ""), height=80)
-        bullet1 = st.text_area("🎯 Bullet 1", value=pd.get("bullet1", ""), height=60)
-        bullet2 = st.text_area("🎯 Bullet 2", value=pd.get("bullet2", ""), height=60)
-        bullet3 = st.text_area("🎯 Bullet 3", value=pd.get("bullet3", ""), height=60)
-        bullet4 = st.text_area("🎯 Bullet 4", value=pd.get("bullet4", ""), height=60)
-        bullet5 = st.text_area("🎯 Bullet 5", value=pd.get("bullet5", ""), height=60)
+        with st.expander("Voir les détails complets"):
+            st.write(f"**Titre :** {pd.get('title', '')}")
+            st.write(f"**Catégorie :** {pd.get('categorie', '—')}")
+            st.write(f"**Marque :** {pd.get('marque', '—')}")
+            st.write(f"**A+ Content :** {'✅ Oui' if pd.get('a_plus') else '❌ Non'}")
+            st.write(f"**Description :** {pd.get('description', '—')[:200]}...")
+            st.write(f"**Bullets ({len(pd.get('bullets', []))}) :**")
+            for b in pd.get("bullets", []):
+                st.write(f"  • {b[:100]}")
 
-    with col2:
-        description = st.text_area("📄 Description", value=pd.get("description", ""), height=150)
-        categorie = st.text_input("📂 Catégorie", placeholder="Ex: Santé & Soins du corps")
-        try:
-            prix_val = float(str(pd.get("prix", "25")).replace("€", "").replace(",", ".").strip().split()[0])
-        except:
-            prix_val = 25.0
-        prix = st.number_input("💰 Prix (€)", value=prix_val, min_value=0.0, step=0.5)
-        nb_avis = st.number_input("💬 Nombre d'avis", value=int(pd.get("nb_avis", 0)), min_value=0)
-        note = st.slider("⭐ Note", 1.0, 5.0, float(pd.get("note", 4.0)), 0.1)
-        nb_images = st.number_input("🖼️ Nombre d'images", value=int(pd.get("nb_images", 5)), min_value=0, max_value=9)
-        a_plus = st.checkbox("✅ A+ Content présent", value=bool(pd.get("a_plus", False)))
+        st.markdown("---")
+        if st.button("🚀 Lancer l'audit", use_container_width=True, type="primary"):
+            with st.spinner("Analyse en cours..."):
+                result = audit_listing(pd, mot_cle_principal)
+            afficher_resultats_audit(result, pd)
 
-    st.markdown("---")
-    if st.button("🚀 Lancer l'audit", use_container_width=True, type="primary"):
-        if not titre:
-            st.warning("Veuillez renseigner le titre.")
-        else:
-            result = lancer_audit(titre, bullet1, bullet2, bullet3, bullet4, bullet5,
-                                   description, mot_cle_principal, categorie, prix,
-                                   nb_avis, note, nb_images, a_plus)
-            afficher_resultats(result)
+    elif not asin_input:
+        st.info("👆 Entrez un ASIN ou une URL Amazon pour commencer")
 
 # ── MODE GÉNÉRATION ────────────────────────────────────────────────────────────
 elif mode == "✍️ Générer une fiche":
@@ -416,31 +275,24 @@ elif mode == "✍️ Générer une fiche":
 
 Génère une fiche produit Amazon complète et optimisée en {langue} avec un ton {ton}.
 
-Retourne UNIQUEMENT un JSON valide avec ce format exact :
+Retourne UNIQUEMENT un JSON valide :
 {{
-  "titre": "<titre optimisé max 200 caractères avec mots-clés principaux>",
-  "bullet1": "<bullet point 1 — commencer par un bénéfice en MAJUSCULES>",
-  "bullet2": "<bullet point 2>",
-  "bullet3": "<bullet point 3>",
-  "bullet4": "<bullet point 4>",
-  "bullet5": "<bullet point 5>",
-  "description": "<description HTML Amazon 2000 caractères max>",
-  "mots_cles_backend": "<mots-clés backend séparés par des espaces, max 250 octets>"
+  "titre": "<titre optimisé max 200 caractères>",
+  "bullet1": "<bullet 1 — BÉNÉFICE EN MAJUSCULES — explication>",
+  "bullet2": "<bullet 2>",
+  "bullet3": "<bullet 3>",
+  "bullet4": "<bullet 4>",
+  "bullet5": "<bullet 5>",
+  "description": "<description 2000 car. max>",
+  "mots_cles_backend": "<mots-clés séparés par espaces, max 250 octets>"
 }}
 
-Informations produit :
-- Produit : {produit}
-- Catégorie : {categorie_gen or 'non spécifiée'}
-- Prix : {prix_gen}€
-- Mots-clés cibles : {mots_cles or 'non spécifiés'}
-- Avantages : {avantages or 'non spécifiés'}
-- Public cible : {public_cible or 'non spécifié'}
-
-Règles :
-- Titre avec les 2-3 premiers mots-clés naturellement intégrés
-- Chaque bullet commence par un bénéfice en MAJUSCULES suivi de " — " puis l'explication
-- Description persuasive et rassurante
-- Optimisé pour Amazon.fr"""
+Produit : {produit}
+Catégorie : {categorie_gen or 'non spécifiée'}
+Prix : {prix_gen}€
+Mots-clés : {mots_cles or 'non spécifiés'}
+Avantages : {avantages or 'non spécifiés'}
+Public : {public_cible or 'non spécifié'}"""
 
             with st.spinner("Génération en cours..."):
                 result_gen = appel_groq(prompt_gen)
@@ -469,7 +321,6 @@ Règles :
 
                 export = f"""FICHE PRODUIT — {produit}
 {'='*50}
-
 TITRE:
 {result_gen.get('titre', '')}
 
