@@ -310,50 +310,44 @@ def afficher_resultats_audit(result, product_data=None):
         st.markdown("---")
         st.markdown("### 💡 Optimisations IA — Expert Fiche Produit")
 
-        with st.spinner("Génération des optimisations par l'IA..."):
-            bullets_actuels = "
-".join([f"{i+1}. {b}" for i, b in enumerate(product_data.get('bullets', []))])
-            prompt = f"""Tu es un expert Amazon avec 20 ans d'expérience en optimisation de fiches produit.
+        with st.spinner("Generation des optimisations par l'IA..."):
+            bullets_actuels = "\n".join([f"{i+1}. {b}" for i, b in enumerate(product_data.get('bullets', []))])
+            titre_actuel = product_data.get('title', '')
+            marque_actuel = product_data.get('marque', '')
+            categorie_actuel = product_data.get('categorie', '')
+            rating_actuel = product_data.get('rating', '')
+            nb_avis_actuel = product_data.get('nb_avis', 0)
+            prix_actuel = product_data.get('prix', '')
+            score_seo = details.get('seo', {}).get('score', 0)
+            score_titre = details.get('titre', {}).get('score', 0)
 
-Analyse cette fiche et génère des optimisations complètes. Retourne UNIQUEMENT ce JSON valide :
-
-{{
-  "titre_pc": "<titre PC optimisé, exactement 180-200 caractères, mot-clé principal en premier, marque à la fin>",
-  "titre_mobile": "<titre mobile optimisé, maximum 80 caractères, bénéfice principal en premier>",
-  "bullets_pc": [
-    "<BÉNÉFICE EN MAJUSCULES — explication détaillée avec preuve, 300-500 caractères>",
-    "<bullet 2 PC>",
-    "<bullet 3 PC>",
-    "<bullet 4 PC>",
-    "<bullet 5 PC>"
-  ],
-  "bullets_mobile": [
-    "<bullet 1 mobile, max 200 car., bénéfice immédiat>",
-    "<bullet 2 mobile>",
-    "<bullet 3 mobile>",
-    "<bullet 4 mobile>",
-    "<bullet 5 mobile>"
-  ],
-  "mots_interdits_detectes": ["<mot interdit 1>", "<mot interdit 2>"],
-  "mots_cles_manquants": ["<mot-clé opportunité 1>", "<mot-clé opportunité 2>", "<mot-clé 3>"],
-  "analyse_conversion": "<analyse 2-3 phrases sur les points forts/faibles de conversion>",
-  "conseil_expert": "<conseil clé d'un expert pour améliorer cette fiche>"
-}}
-
-Mots interdits Amazon à détecter : garanti, meilleur, N°1, certifié (sans preuve), écologique (sans certification), naturel (sans preuve), sûr, sans danger.
-
-Données fiche :
-- Titre actuel : {product_data.get('title', '')}
-- Marque : {product_data.get('marque', '')}
-- Catégorie : {product_data.get('categorie', '')}
-- Bullets actuels :
-{bullets_actuels}
-- Note : {product_data.get('rating', '')} /5
-- Avis : {product_data.get('nb_avis', 0)}
-- Prix : {product_data.get('prix', '')}€
-- Score SEO : {details.get('seo', {}).get('score', 0)}/20
-- Score titre : {details.get('titre', {}).get('score', 0)}/25"""
-
+            prompt_parts = [
+                "Tu es un expert Amazon avec 20 ans d'experience en optimisation de fiches produit.",
+                "Analyse cette fiche et genere des optimisations completes. Retourne UNIQUEMENT ce JSON valide :",
+                "{",
+                '  "titre_pc": "<titre PC optimise, 180-200 caracteres, mot-cle principal en premier, marque a la fin>",',
+                '  "titre_mobile": "<titre mobile, maximum 80 caracteres, benefice principal en premier>",',
+                '  "bullets_pc": ["<BENEFICE EN MAJUSCULES — explication 300-500 car.>","<bullet 2>","<bullet 3>","<bullet 4>","<bullet 5>"],',
+                '  "bullets_mobile": ["<bullet 1 mobile max 200 car.>","<bullet 2>","<bullet 3>","<bullet 4>","<bullet 5>"],',
+                '  "mots_interdits_detectes": ["<mot interdit si present>"],',
+                '  "mots_cles_manquants": ["<opportunite 1>","<opportunite 2>","<opportunite 3>"],',
+                '  "analyse_conversion": "<analyse 2-3 phrases conversion>",',
+                '  "conseil_expert": "<conseil cle expert>"',
+                "}",
+                "",
+                "Mots interdits a detecter: garanti, meilleur, N1, certifie sans preuve, ecologique sans certification.",
+                "",
+                f"Titre actuel : {titre_actuel}",
+                f"Marque : {marque_actuel}",
+                f"Categorie : {categorie_actuel}",
+                f"Bullets actuels : {bullets_actuels}",
+                f"Note : {rating_actuel}/5",
+                f"Avis : {nb_avis_actuel}",
+                f"Prix : {prix_actuel}EUR",
+                f"Score SEO : {score_seo}/20",
+                f"Score titre : {score_titre}/25",
+            ]
+            prompt = "\n".join(prompt_parts)
             suggestions = appel_groq(prompt)
 
         if suggestions:
