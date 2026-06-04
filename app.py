@@ -321,33 +321,45 @@ def afficher_resultats_audit(result, product_data=None):
             score_seo = details.get('seo', {}).get('score', 0)
             score_titre = details.get('titre', {}).get('score', 0)
 
-            prompt_parts = [
-                "Tu es un expert Amazon avec 20 ans d'experience en optimisation de fiches produit.",
-                "Analyse cette fiche et genere des optimisations completes. Retourne UNIQUEMENT ce JSON valide :",
-                "{",
-                '  "titre_pc": "<titre PC optimise, 180-200 caracteres, mot-cle principal en premier, marque a la fin>",',
-                '  "titre_mobile": "<titre mobile, maximum 80 caracteres, benefice principal en premier>",',
-                '  "bullets_pc": ["<BENEFICE EN MAJUSCULES — explication 300-500 car.>","<bullet 2>","<bullet 3>","<bullet 4>","<bullet 5>"],',
-                '  "bullets_mobile": ["<bullet 1 mobile max 200 car.>","<bullet 2>","<bullet 3>","<bullet 4>","<bullet 5>"],',
-                '  "mots_interdits_detectes": ["<mot interdit si present>"],',
-                '  "mots_cles_manquants": ["<opportunite 1>","<opportunite 2>","<opportunite 3>"],',
-                '  "analyse_conversion": "<analyse 2-3 phrases conversion>",',
-                '  "conseil_expert": "<conseil cle expert>"',
-                "}",
-                "",
-                "Mots interdits a detecter: garanti, meilleur, N1, certifie sans preuve, ecologique sans certification.",
-                "",
-                f"Titre actuel : {titre_actuel}",
-                f"Marque : {marque_actuel}",
-                f"Categorie : {categorie_actuel}",
-                f"Bullets actuels : {bullets_actuels}",
-                f"Note : {rating_actuel}/5",
-                f"Avis : {nb_avis_actuel}",
-                f"Prix : {prix_actuel}EUR",
-                f"Score SEO : {score_seo}/20",
-                f"Score titre : {score_titre}/25",
-            ]
-            prompt = "\n".join(prompt_parts)
+            prompt = f"""Tu es un expert Amazon senior avec 20 ans d experience en optimisation de fiches produit sur Amazon France. Tu as optimise plus de 5000 fiches et tu sais exactement ce qui convertit.
+
+MISSION : Optimise completement cette fiche produit Amazon. Sois TRES concret, specifique et percutant. Pas de contenu generique.
+
+REGLES STRICTES :
+- titre_pc : EXACTEMENT entre 150 et 200 caracteres. Mot-cle principal EN PREMIER. Marque a la fin apres tiret.
+- titre_mobile : MAXIMUM 80 caracteres. Le benefice le plus fort en premier mot.
+- bullets_pc : CHAQUE bullet MINIMUM 350 caracteres, MAXIMUM 500 caracteres. Format: "MOT-CLE EN MAJUSCULES - benefice principal | detail technique | preuve sociale ou usage concret". Jamais de contenu generique.
+- bullets_mobile : CHAQUE bullet entre 150 et 200 caracteres. Benefice immediat + detail cle.
+- mots_interdits_detectes : Liste TOUS les mots interdits Amazon trouves dans les bullets/titre actuels (garanti, meilleur, N1, certifie sans preuve, satisfait ou rembourse, ecologique sans label, naturel sans preuve, sans danger, approuve).
+- mots_cles_manquants : 5 mots-cles specifiques a forte intention d achat absents de la fiche actuelle.
+- analyse_conversion : 3 points CONCRETS et SPECIFIQUES sur ce qui freine la conversion sur cette fiche precise.
+- conseil_expert : UN seul conseil ultra-specifique et actionnable pour cette fiche, pas un conseil generique.
+
+EXEMPLE de bullet_pc de qualite :
+"ECRANS LCD DOUBLE AFFICHAGE 3.5 POUCES - Lisez vos resultats d un seul coup d oeil grace aux chiffres 2x plus grands que la moyenne du marche, retro-eclaires automatiquement en cas de luminosite insuffisante. Ideal pour les seniors ou toute personne souhaitant eviter les erreurs de lecture - teste et approuve par 847 familles en France."
+
+FICHE A OPTIMISER :
+Titre actuel : {titre_actuel}
+Marque : {marque_actuel}
+Categorie : {categorie_actuel}
+Prix : {prix_actuel}EUR
+Bullets actuels :
+{bullets_actuels}
+Note : {rating_actuel}/5 ({nb_avis_actuel} avis)
+Images : {product_data.get("image_count", 0)}
+A+ Content : {"Oui" if product_data.get("a_plus") else "Non"}
+
+Retourne UNIQUEMENT ce JSON valide, sans commentaire :
+{{
+  "titre_pc": "...",
+  "titre_mobile": "...",
+  "bullets_pc": ["bullet1 min 350 car", "bullet2", "bullet3", "bullet4", "bullet5"],
+  "bullets_mobile": ["bullet1 mobile 150-200 car", "bullet2", "bullet3", "bullet4", "bullet5"],
+  "mots_interdits_detectes": ["mot1", "mot2"],
+  "mots_cles_manquants": ["kw1", "kw2", "kw3", "kw4", "kw5"],
+  "analyse_conversion": "point1. point2. point3.",
+  "conseil_expert": "conseil ultra-specifique et actionnable"
+}}"""
             suggestions = appel_groq(prompt)
 
         if suggestions:
