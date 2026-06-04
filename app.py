@@ -103,6 +103,155 @@ def afficher_reco(items):
         cls = "reco-ok" if type_ == "ok" else ("reco-ko" if type_ == "ko" else "reco-warn")
         st.markdown(f'<div class="reco-item {cls}">{icon} {texte}</div>', unsafe_allow_html=True)
 
+
+def generer_rapport_pdf(product_data, audit_result, suggestions):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from io import BytesIO
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
+
+    VERT = colors.HexColor("#059669")
+    ROUGE = colors.HexColor("#dc2626")
+    ORANGE = colors.HexColor("#d97706")
+    GRIS = colors.HexColor("#f9fafb")
+
+    styles = getSampleStyleSheet()
+    titre_s = ParagraphStyle("titre", fontSize=18, textColor=VERT, spaceAfter=4, fontName="Helvetica-Bold", alignment=TA_CENTER)
+    sous_titre_s = ParagraphStyle("sous", fontSize=9, textColor=colors.HexColor("#6b7280"), spaceAfter=12, alignment=TA_CENTER)
+    h2_s = ParagraphStyle("h2", fontSize=12, textColor=VERT, spaceBefore=12, spaceAfter=6, fontName="Helvetica-Bold")
+    h3_s = ParagraphStyle("h3", fontSize=10, textColor=colors.HexColor("#111827"), spaceBefore=8, spaceAfter=4, fontName="Helvetica-Bold")
+    normal_s = ParagraphStyle("normal", fontSize=8, textColor=colors.HexColor("#374151"), spaceAfter=3)
+    small_s = ParagraphStyle("small", fontSize=7, textColor=colors.HexColor("#6b7280"), spaceAfter=2)
+    footer_s = ParagraphStyle("footer", fontSize=7, textColor=colors.HexColor("#9ca3af"), alignment=TA_CENTER, spaceBefore=20)
+
+    story = []
+
+    # Header
+    story.append(Paragraph("Audit Fiche Produit Amazon", titre_s))
+    story.append(Paragraph(f"ASIN : {product_data.get('asin', '—')} — {product_data.get('categorie', '')}", sous_titre_s))
+    story.append(HRFlowable(width="100%", thickness=2, color=VERT, spaceAfter=10))
+
+    # Score global
+    score = audit_result.get("score_global", 0)
+    score_color = VERT if score >= 75 else (ORANGE if score >= 50 else ROUGE)
+    label = "EXCELLENT" if score >= 75 else ("A AMELIORER" if score >= 50 else "CRITIQUE")
+
+    score_data = [["SCORE GLOBAL", f"{score}/100", label]]
+    score_table = Table(score_data, colWidths=[5*cm, 4*cm, 6*cm])
+    score_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), GRIS),
+        ("FONTNAME", (0,0), (0,0), "Helvetica-Bold"),
+        ("FONTNAME", (1,0), (1,0), "Helvetica-Bold"),
+        ("FONTSIZE", (0,0), (-1,-1), 10),
+        ("TEXTCOLOR", (1,0), (1,0), score_color),
+        ("ALIGN", (0,0), (-1,-1), "CENTER"),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING", (0,0), (-1,-1), 8),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+        ("GRID", (0,0), (-1,-1), 0.5, colors.HexColor("#e5e7eb")),
+    ]))
+    story.append(score_table)
+    story.append(Spacer(1, 10))
+
+    # Titre produit
+    story.append(Paragraph("Fiche analysee", h2_s))
+    titre_prod = product_data.get("title", "")[:120] + ("..." if len(product_data.get("title","")) > 120 else "")
+    story.append(Paragraph(titre_prod, normal_s))
+
+    kpi_data = [["Images", "Note", "Avis", "Prix", "A+ Content"],
+                [str(product_data.get("image_count",0)),
+                 str(product_data.get("rating","—")),
+                 str(product_data.get("nb_avis",0)),
+                 f"{product_data.get('prix','—')}EUR",
+                 "Oui" if product_data.get("a_plus") else "Non"]]
+    kpi_table = Table(kpi_data, colWidths=[3*cm]*5)
+    kpi_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), VERT),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE", (0,0), (-1,-1), 8),
+        ("ALIGN", (0,0), (-1,-1), "CENTER"),
+        ("GRID", (0,0), (-1,-1), 0.5, colors.HexColor("#e5e7eb")),
+        ("TOPPADDING", (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+    ]))
+    story.append(Spacer(1, 6))
+    story.append(kpi_table)
+
+    # Scores par section
+    story.append(Paragraph("Scores par section", h2_s))
+    details = audit_result.get("details", {})
+    section_labels = {"titre": "Titre", "images": "Images", "bullets": "Bullet Points", "seo": "SEO", "preuve_sociale": "Preuve Sociale"}
+    sec_data = [["Section", "Score", "Max", "Statut"]]
+    for key, label_s in section_labels.items():
+        sec = details.get(key, {})
+        sc = sec.get("score", 0)
+        mx = sec.get("max", 20)
+        pct = sc/mx*100
+        statut = "Excellent" if pct >= 75 else ("A ameliorer" if pct >= 50 else "Critique")
+        sec_data.append([label_s, str(sc), str(mx), statut])
+    sec_table = Table(sec_data, colWidths=[5*cm, 2.5*cm, 2.5*cm, 5*cm])
+    sec_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#374151")),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE", (0,0), (-1,-1), 8),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, GRIS]),
+        ("GRID", (0,0), (-1,-1), 0.5, colors.HexColor("#e5e7eb")),
+        ("ALIGN", (1,0), (2,-1), "CENTER"),
+        ("TOPPADDING", (0,0), (-1,-1), 4),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+    ]))
+    story.append(sec_table)
+
+    # Top 3 actions
+    story.append(Paragraph("Top 3 actions prioritaires", h2_s))
+    for i, action in enumerate(audit_result.get("top3", []), 1):
+        story.append(Paragraph(f"{i}. {action}", normal_s))
+
+    # Titres optimisés
+    if suggestions:
+        story.append(Paragraph("Titres optimises", h2_s))
+        story.append(Paragraph("Version PC (180-200 car.) :", h3_s))
+        story.append(Paragraph(suggestions.get("titre_pc", "—"), normal_s))
+        story.append(Paragraph("Version Mobile (max 80 car.) :", h3_s))
+        story.append(Paragraph(suggestions.get("titre_mobile", "—"), normal_s))
+
+        # Bullets optimisés
+        story.append(Paragraph("Bullet Points optimises - Version PC", h2_s))
+        for i, bp in enumerate(suggestions.get("bullets_pc", []), 1):
+            story.append(Paragraph(f"{i}. {bp[:300]}", normal_s))
+
+        story.append(Paragraph("Bullet Points optimises - Version Mobile", h2_s))
+        for i, bp in enumerate(suggestions.get("bullets_mobile", []), 1):
+            story.append(Paragraph(f"{i}. {bp[:200]}", normal_s))
+
+        # Mots interdits
+        mots = suggestions.get("mots_interdits_detectes", [])
+        if mots:
+            story.append(Paragraph("Mots interdits detectes", h2_s))
+            for m in mots:
+                story.append(Paragraph(f"- {m}", normal_s))
+
+        # Conseil expert
+        story.append(Paragraph("Conseil Expert", h2_s))
+        story.append(Paragraph(suggestions.get("conseil_expert", "—"), normal_s))
+
+    # Footer
+    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#e5e7eb"), spaceBefore=15))
+    story.append(Paragraph("Rapport genere par Fiche Pro — AilteqFrance", footer_s))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+
 def afficher_resultats_audit(result, product_data=None):
     score = result.get("score_global", 0)
     details = result.get("details", {})
@@ -156,30 +305,123 @@ def afficher_resultats_audit(result, product_data=None):
             afficher_reco(items)
             st.markdown("")
 
-    # Suggestions IA
+    # Suggestions IA + PDF
     if product_data:
         st.markdown("---")
-        st.markdown("### 💡 Suggestions IA")
-        with st.spinner("Génération des suggestions..."):
-            prompt = f"""Tu es un expert Amazon. Propose en JSON :
+        st.markdown("### 💡 Optimisations IA — Expert Fiche Produit")
+
+        with st.spinner("Génération des optimisations par l'IA..."):
+            bullets_actuels = "
+".join([f"{i+1}. {b}" for i, b in enumerate(product_data.get('bullets', []))])
+            prompt = f"""Tu es un expert Amazon avec 20 ans d'expérience en optimisation de fiches produit.
+
+Analyse cette fiche et génère des optimisations complètes. Retourne UNIQUEMENT ce JSON valide :
+
 {{
-  "titre_optimise": "<titre optimisé>",
-  "bullet_optimise": "<bullet 1 amélioré>"
+  "titre_pc": "<titre PC optimisé, exactement 180-200 caractères, mot-clé principal en premier, marque à la fin>",
+  "titre_mobile": "<titre mobile optimisé, maximum 80 caractères, bénéfice principal en premier>",
+  "bullets_pc": [
+    "<BÉNÉFICE EN MAJUSCULES — explication détaillée avec preuve, 300-500 caractères>",
+    "<bullet 2 PC>",
+    "<bullet 3 PC>",
+    "<bullet 4 PC>",
+    "<bullet 5 PC>"
+  ],
+  "bullets_mobile": [
+    "<bullet 1 mobile, max 200 car., bénéfice immédiat>",
+    "<bullet 2 mobile>",
+    "<bullet 3 mobile>",
+    "<bullet 4 mobile>",
+    "<bullet 5 mobile>"
+  ],
+  "mots_interdits_detectes": ["<mot interdit 1>", "<mot interdit 2>"],
+  "mots_cles_manquants": ["<mot-clé opportunité 1>", "<mot-clé opportunité 2>", "<mot-clé 3>"],
+  "analyse_conversion": "<analyse 2-3 phrases sur les points forts/faibles de conversion>",
+  "conseil_expert": "<conseil clé d'un expert pour améliorer cette fiche>"
 }}
 
-Titre actuel : {product_data.get('title', '')}
-Bullet 1 : {product_data.get('bullets', [''])[0] if product_data.get('bullets') else ''}
-Score SEO : {details.get('seo', {}).get('score', 0)}/20"""
+Mots interdits Amazon à détecter : garanti, meilleur, N°1, certifié (sans preuve), écologique (sans certification), naturel (sans preuve), sûr, sans danger.
+
+Données fiche :
+- Titre actuel : {product_data.get('title', '')}
+- Marque : {product_data.get('marque', '')}
+- Catégorie : {product_data.get('categorie', '')}
+- Bullets actuels :
+{bullets_actuels}
+- Note : {product_data.get('rating', '')} /5
+- Avis : {product_data.get('nb_avis', 0)}
+- Prix : {product_data.get('prix', '')}€
+- Score SEO : {details.get('seo', {}).get('score', 0)}/20
+- Score titre : {details.get('titre', {}).get('score', 0)}/25"""
+
             suggestions = appel_groq(prompt)
 
         if suggestions:
-            col_t, col_b = st.columns(2)
-            with col_t:
-                st.markdown("**Titre optimisé suggéré :**")
-                st.info(suggestions.get("titre_optimise", "—"))
-            with col_b:
-                st.markdown("**Bullet point amélioré :**")
-                st.info(suggestions.get("bullet_optimise", "—"))
+            # Titres
+            st.markdown("#### 📝 Titres optimisés")
+            col_pc, col_mob = st.columns(2)
+            with col_pc:
+                titre_pc = suggestions.get("titre_pc", "—")
+                st.markdown("**🖥️ Version PC (180-200 car.) :**")
+                st.info(titre_pc)
+                st.caption(f"{len(titre_pc)} caractères")
+            with col_mob:
+                titre_mob = suggestions.get("titre_mobile", "—")
+                st.markdown("**📱 Version Mobile (max 80 car.) :**")
+                st.info(titre_mob)
+                st.caption(f"{len(titre_mob)} caractères")
+
+            # Bullets
+            st.markdown("#### 🎯 Bullet Points optimisés")
+            tab_pc, tab_mob = st.tabs(["🖥️ Version PC (jusqu'à 500 car.)", "📱 Version Mobile (max 200 car.)"])
+            with tab_pc:
+                for i, bp in enumerate(suggestions.get("bullets_pc", []), 1):
+                    st.markdown(f"**Bullet {i} :** {bp}")
+                    color = "green" if len(bp) <= 500 else "red"
+                    st.caption(f":{color}[{len(bp)} caractères]")
+            with tab_mob:
+                for i, bp in enumerate(suggestions.get("bullets_mobile", []), 1):
+                    st.markdown(f"**Bullet {i} :** {bp}")
+                    color = "green" if len(bp) <= 200 else "orange"
+                    st.caption(f":{color}[{len(bp)} caractères]")
+
+            # Alertes mots interdits
+            mots_interdits = suggestions.get("mots_interdits_detectes", [])
+            if mots_interdits:
+                st.markdown("#### ⚠️ Mots interdits détectés")
+                for mot in mots_interdits:
+                    st.warning(f"⛔ **{mot}** — à supprimer (risque de suppression de fiche Amazon)")
+
+            # Mots-clés manquants
+            mots_manquants = suggestions.get("mots_cles_manquants", [])
+            if mots_manquants:
+                st.markdown("#### 🔍 Mots-clés opportunités")
+                cols_kw = st.columns(min(len(mots_manquants), 3))
+                for i, kw in enumerate(mots_manquants):
+                    cols_kw[i % 3].info(f"🎯 {kw}")
+
+            # Analyse conversion
+            st.markdown("#### 💰 Analyse conversion")
+            st.info(suggestions.get("analyse_conversion", "—"))
+
+            # Conseil expert
+            st.markdown("#### 🏆 Conseil Expert")
+            st.success(f"💡 {suggestions.get('conseil_expert', '—')}")
+
+            # Export PDF
+            st.markdown("---")
+            st.markdown("#### 📄 Rapport PDF")
+            try:
+                pdf_bytes = generer_rapport_pdf(product_data, result, suggestions)
+                st.download_button(
+                    "⬇️ Télécharger le rapport PDF complet",
+                    pdf_bytes,
+                    f"audit_fiche_{product_data.get('asin', 'asin')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.warning(f"PDF non disponible : {e}")
 
 # ── MODE AUDIT ─────────────────────────────────────────────────────────────────
 if mode == "🔍 Audit de fiche":
